@@ -1,10 +1,12 @@
+import random
 import uuid
+from datetime import datetime, timedelta
 
 from django.contrib.auth.models import AbstractUser
 from django.core.validators import FileExtensionValidator
 from django.db import models
-import random
-from datetime import datetime, timedelta
+
+from shared.models import BaseModel
 
 from rest_framework_simplejwt.tokens import RefreshToken
 from wheel.cli.convert import normalize
@@ -78,7 +80,7 @@ class User(AbstractUser, BaseModel):
             self.password = temp_password
 
     def hashing_password(self):
-        if not self.password:
+        if not self.password.startswith('pbkdf2_sha256'):
             self.set_password(self.password)
 
     def token(self):
@@ -105,22 +107,21 @@ EMAIL_EXPIRE = 5
 
 class UserConfirmation(BaseModel):
     TYPE_CHOICES = (
-        (VIA_EMAIL, VIA_EMAIL),
-        (VIA_PHONE, VIA_PHONE)
+        (VIA_PHONE, VIA_PHONE),
+        (VIA_EMAIL, VIA_EMAIL)
     )
     code = models.CharField(max_length=4)
     verify_type = models.CharField(max_length=31, choices=TYPE_CHOICES)
     user = models.ForeignKey('users.User', models.CASCADE, related_name='verify_codes')
-    expiration_time = models.DateTimeField(null=True, blank=True)
+    expiration_time = models.DateTimeField(null=True)
     is_confirmed = models.BooleanField(default=False)
 
     def __str__(self):
         return str(self.user.__str__())
 
     def save(self, *args, **kwargs):
-        if not self.pk:
-            if self.verify_type == VIA_EMAIL:
-                self.expiration_time = datetime.now() + timedelta(minutes=EMAIL_EXPIRE)
-            else:
-                self.expiration_time = datetime.now() + timedelta(minutes=PHONE_EXPIRE)
+        if self.verify_type == VIA_EMAIL:  # 30-mart 11-33 + 5minutes
+            self.expiration_time = datetime.now() + timedelta(minutes=EMAIL_EXPIRE)
+        else:
+            self.expiration_time = datetime.now() + timedelta(minutes=PHONE_EXPIRE)
         super(UserConfirmation, self).save(*args, **kwargs)

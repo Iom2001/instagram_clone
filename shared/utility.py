@@ -1,9 +1,8 @@
 import re
 import threading
-
 import phonenumbers
 from django.core.mail import EmailMessage
-
+from twilio.rest import Client
 from django.template.loader import render_to_string
 from rest_framework.exceptions import ValidationError
 from decouple import config
@@ -66,4 +65,15 @@ def send_email(email, code):
             "body": html_content,
             "content_type": "html"
         }
+    )
+
+
+def send_phone_code(phone, code):
+    account_sid = config('account_sid')
+    auth_token = config('auth_token')
+    client = Client(account_sid, auth_token)
+    client.messages.create(
+        body=f"Salom do'stim! Sizning tasdiqlash kodingiz: {code}\n",
+        from_="+99899325242",
+        to=f"{phone}"
     )
