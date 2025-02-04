@@ -1,5 +1,8 @@
 from datetime import timezone
+from tokenize import TokenError
 
+from aiohttp.helpers import TOKEN
+from django.core.serializers import serialize
 from django.shortcuts import render
 from django.views.generic import CreateView
 from rest_framework import permissions, status
@@ -9,10 +12,13 @@ from rest_framework.generics import CreateAPIView, UpdateAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from shared.utility import send_email
 from users.models import User, DONE, CODE_VERIFIED, VIA_EMAIL, VIA_PHONE
-from users.serializers import SignUpSerializer, ChangeUserInformationSerializer
+from users.serializers import SignUpSerializer, ChangeUserInformationSerializer, ChangeUserPhotoSerializer, \
+    LoginSerializer, LoginRefreshSerializer, LogoutSerializer
 
 
 # Create your views here.
@@ -118,3 +124,46 @@ class ChangeUserInformationView(UpdateAPIView):
             data=data,
             status=status.HTTP_200_OK
         )
+
+class ChangeUserPhotoView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request, *args, **kwargs):
+        serializer = ChangeUserPhotoSerializer(data=request.data)
+        if serializer.is_valid():
+            user = request.user
+            serializer.update(user, serializer.validated_data)
+            return Response(
+                {
+                    'message': "Rasm muvaffaqiyatli o'zgartirildi"
+                }, status=status.HTTP_200_OK
+            )
+        return Response(
+            serializer.errors, 400
+        )
+
+class LoginView(TokenObtainPairView):
+    serializer_class = LoginSerializer
+
+
+class LoginRefreshView(TokenRefreshView):
+    serializer_class = LoginRefreshSerializer
+
+class  LogOutView(APIView):
+    serializer_class = LogoutSerializer
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        serializer = self.serializer_class(data=self.request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            refresh_token = self.request.data['refresh']
+            token = RefreshToken(refresh_token)
+            token.blacklist()
+            data = {
+                'success': True,
+                'message': "You are logged out",
+            }
+            return Response(data=data, status=status.HTTP_200_OK)
+        except TokenError:
+            return Response(status=400)
