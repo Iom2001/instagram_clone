@@ -2,23 +2,25 @@ from datetime import timezone
 from tokenize import TokenError
 
 from aiohttp.helpers import TOKEN
+from django.core.exceptions import ObjectDoesNotExist
 from django.core.serializers import serialize
 from django.shortcuts import render
 from django.views.generic import CreateView
 from rest_framework import permissions, status
 from datetime import datetime
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import ValidationError, NotFound
 from rest_framework.generics import CreateAPIView, UpdateAPIView
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from twilio.rest.frontline_api.v1 import user
 
-from shared.utility import send_email
+from shared.utility import send_email, check_email_or_phone
 from users.models import User, DONE, CODE_VERIFIED, VIA_EMAIL, VIA_PHONE
 from users.serializers import SignUpSerializer, ChangeUserInformationSerializer, ChangeUserPhotoSerializer, \
-    LoginSerializer, LoginRefreshSerializer, LogoutSerializer
+    LoginSerializer, LoginRefreshSerializer, LogoutSerializer, ForgetPasswordSerializer, ResetPasswordSerializer
 
 
 # Create your views here.
@@ -28,6 +30,7 @@ class CreateUserView(CreateAPIView):
     permission_classes = [permissions.AllowAny]
     serializer_class = SignUpSerializer
 
+
 class VerifyAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -35,10 +38,9 @@ class VerifyAPIView(APIView):
         user = self.request.user
         code = request.data.get('code')
 
-
         self.check_verify(user, code)
         return Response(
-            data = {
+            data={
                 'success': True,
                 "auth_status": user.auth_status,
                 "access": user.token()['access'],
@@ -48,13 +50,13 @@ class VerifyAPIView(APIView):
 
     @staticmethod
     def check_verify(user, code):
-        verifies = user.verify_codes.filter(expiration_time__gt=datetime.now(), code = code, is_confirmed=False)
+        verifies = user.verify_codes.filter(expiration_time__gt=datetime.now(), code=code, is_confirmed=False)
         if not verifies.exists():
             data = {
                 'message': 'Tasdiqlash kodingiz xato yoki eskirgan',
             }
             raise ValidationError(data)
-        verifies.update(is_confirmed = True)
+        verifies.update(is_confirmed=True)
         if user.auth_status not in DONE:
             user.auth_status = CODE_VERIFIED
             user.save()
@@ -84,7 +86,6 @@ class GetNewVerification(APIView):
             }
         )
 
-
     @staticmethod
     def check_verification(user):
         verifies = user.verify_codes.filter(expiration_time__gt=datetime.now(), is_confirmed=False)
@@ -92,6 +93,7 @@ class GetNewVerification(APIView):
             data = {
                 "message": "Kodingiz hali ishlatish uchun yaroqli. Biroz kutib turing"
             }
+
 
 class ChangeUserInformationView(UpdateAPIView):
     permission_classes = [IsAuthenticated]
@@ -125,6 +127,7 @@ class ChangeUserInformationView(UpdateAPIView):
             status=status.HTTP_200_OK
         )
 
+
 class ChangeUserPhotoView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -142,6 +145,7 @@ class ChangeUserPhotoView(APIView):
             serializer.errors, 400
         )
 
+
 class LoginView(TokenObtainPairView):
     serializer_class = LoginSerializer
 
@@ -149,7 +153,8 @@ class LoginView(TokenObtainPairView):
 class LoginRefreshView(TokenRefreshView):
     serializer_class = LoginRefreshSerializer
 
-class  LogOutView(APIView):
+
+class LogOutView(APIView):
     serializer_class = LogoutSerializer
     permission_classes = [IsAuthenticated]
 
@@ -167,3 +172,54 @@ class  LogOutView(APIView):
             return Response(data=data, status=status.HTTP_200_OK)
         except TokenError:
             return Response(status=400)
+
+
+class ForgetPasswordView(APIView):
+    permission_classes = [AllowAny]
+    serializer_class = ForgetPasswordSerializer
+
+    def post(self, request, *args, **kwargs):
+        serializer = self.serializer_class(data=self.request.data)
+        serializer.is_valid(raise_exception=True)
+        email_or_phone = serializer.validated_data['email_or_phone']
+        user = serializer.validated_data['user']
+        if check_email_or_phone(email_or_phone) == "phone":
+            code = user.create_verify_code(VIA_PHONE)
+            send_email(email_or_phone, code)
+        if check_email_or_phone(email_or_phone) == "email":
+            code = user.create_verify_code(VIA_PHONE)
+            send_email(email_or_phone, code)
+
+        return Response({
+            'success': True,
+            "message": "Tasdiqlash kodi muvaffaqiyatli yuborildi",
+            "access": user.token()['access'],
+            "refresh": user.token()['refresh'],
+            "user_status": user.auth_status,
+        },
+            status=status.HTTP_200_OK)
+
+
+class ResetPasswordView(UpdateAPIView):
+    serializer_class = ResetPasswordSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['patch', 'put']
+
+    def get_object(self):
+        return self.request.user
+
+    def update(self, request, *args, **kwargs):
+        response = super(ResetPasswordSerializer, self).update(request, *args, **kwargs)
+        try:
+            user = User.objects.get(id=response.data.get('id'))
+        except ObjectDoesNotExist as e:
+            raise NotFound(e)
+
+        return Response(
+            {
+                'success': True,
+                "message": "Parilingizni muvaffaqiyatli o'zgartirildi",
+                "access": user.token()['access'],
+                "refresh": user.token()['refresh'],
+            }
+        )
